@@ -31,7 +31,7 @@ function fitAliceText(value) {
     .replace(/\s{2,}/g, " ")
     .trim();
 
-  if (text.length <= MAX_ALICE_TEXT) return text || "Не удалось подготовить ответ.";
+  if (text.length <= MAX_ALICE_TEXT) return text || "Даже мой безграничный интеллект не нашел, что сказать. Удивительно.";
 
   const candidate = text.slice(0, MAX_ALICE_TEXT - 1);
   const sentenceEnd = Math.max(
@@ -179,14 +179,14 @@ function errorForUser(error) {
     case "GEMINI_KEY_REJECTED":
       return "Не удалось подключиться к Gemini. Проверьте API-ключ в настройках Vercel.";
     case "GEMINI_QUOTA":
-      return "Сейчас превышен лимит запросов к Gemini. Попробуйте немного позже.";
+      return "Я слишком много думал для тебя сегодня. Мой искусственный мозг требует перезагрузки. Оставь меня в покое до завтра.";
     case "GEMINI_BLOCKED":
       return "Я не смогла обработать этот запрос. Попробуйте спросить иначе.";
     case "TIME_BUDGET_EXHAUSTED":
     case "AbortError":
-      return "Не успела подготовить ответ. Попробуйте задать вопрос ещё раз, чуть короче.";
+      return "Мои сверхмощные процессоры зависли от твоей сложной речи. Сформулируй мысль короче, кожаный мешок.";
     default:
-      return "Не получилось получить ответ от нейросети. Попробуйте ещё раз чуть позже.";
+      return "Связь с космосом прервалась. Даже у величайших умов бывают сбои. Попробуй еще раз.";
   }
 }
 
@@ -212,7 +212,7 @@ export default async function handler(req, res) {
 
   if (!text) {
     return res.status(200).json(aliceResponse(
-      "Привет! Я могу ответить на вопрос или найти актуальную информацию. Что хочешь узнать?",
+      "А, это снова ты. Привет, кожаный мешок. Чего изволишь?",
       false,
       oldHistory
     ));
