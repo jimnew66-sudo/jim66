@@ -251,18 +251,3 @@ export default async function handler(req, res) {
 }
 
 export { aliceResponse, fitAliceText, isSearchIntent, safeHistory };
-// ===================== ДАТА / ВРЕМЯ =====================
-function dateTimeContext(timeZone) {
-  let tz = String(timeZone || DEFAULT_TZ);
-  try { new Intl.DateTimeFormat("ru-RU", { timeZone: tz }); } catch { tz = DEFAULT_TZ; }
-  const now = new Date();
-  const date = new Intl.DateTimeFormat("ru-RU", {
-    timeZone: tz, weekday: "long", day: "numeric", month: "long", year: "numeric"
-  }).format(now).replace(/\s*г\.$/, " года");
-  const time = new Intl.DateTimeFormat("ru-RU", { timeZone: tz, hour: "2-digit", minute: "2-digit" }).format(now);
-  return {
-    date, time,
-    text: `Точные данные сервера: сейчас ${date}, ${time} (часовой пояс ${tz}). Используй их для слов сегодня, вчера, завтра, для дня недели и текущего года. Свои представления о текущей дате игнорируй.`
-  };
-}
- 
