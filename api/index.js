@@ -1,12 +1,12 @@
 // ===================== НАСТРОЙКИ =====================
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
-const MAX_HISTORY_MESSAGES = 6;
-const MAX_HISTORY_MESSAGE_CHARS = 140;   // 3 реплики ≈ 933 байта < 1 КБ
+const MAX_HISTORY_MESSAGES = 8;
+const MAX_HISTORY_MESSAGE_CHARS = 1200;   // 3 реплики ≈ 933 байта < 1 КБ
 const MAX_STATE_BYTES = 950;
 const MAX_ALICE_TEXT = 1024;
-const TOTAL_RESPONSE_BUDGET_MS = 3200;   // лимит Алисы 4.5 с с учётом сети
-const SERPER_TIMEOUT_MS = 500;
-const GEMINI_TIMEOUT_MS = 2300;
+const TOTAL_RESPONSE_BUDGET_MS = 3600;   // лимит Алисы 4.5 с с учётом сети
+const SERPER_TIMEOUT_MS = 600;
+const GEMINI_TIMEOUT_MS = 2500;
 const RESERVE_MS = 250;
 const DEFAULT_TZ = process.env.SKILL_TZ || "Europe/Moscow";
 const enc = new TextEncoder();
