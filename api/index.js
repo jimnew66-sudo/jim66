@@ -122,7 +122,15 @@ async function askGemini(text, history, searchContext, timeoutMs) {
     role: item.role,
     parts: [{ text: item.text }]
   }));
-
+const lower = text.toLowerCase().replace(/ё/g, "е");
+if (/какая (сегодня )?дата|какое (сегодня )?число|какой (сегодня )?день|который час|сколько (сейчас )?времени/.test(lower)) {
+  const answer = dateTimeContext(body?.meta?.timezone).split(" (")[0].replace("Сейчас ", "Сегодня ") + ".";
+  const history = [...oldHistory,
+    { role: "user", text },
+    { role: "model", text: answer }
+  ].slice(-MAX_HISTORY_MESSAGES);
+  return res.status(200).json(aliceResponse(answer, false, history));
+}
   const prompt = searchContext
     ? `${text}\n\nРезультаты поиска в интернете:\n${searchContext}\nИспользуй их только там, где они относятся к вопросу.`
     : text;
