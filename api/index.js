@@ -5,7 +5,7 @@ const MAX_ALICE_TEXT = 1024;
 const TOTAL_RESPONSE_BUDGET_MS = 3600;
 const SERPER_TIMEOUT_MS = 600;
 const GEMINI_TIMEOUT_MS = 2500;
-const DEFAULT_TZ = "Asia/Yekaterinburg"; // ← Екб, UTC+5
+const DEFAULT_TZ = "Asia/Yekaterinburg";
 
 const SYSTEM_PROMPT = [
 "Ты — саркастичный, гениальный ИИ по имени Джон Умник.",
@@ -15,17 +15,30 @@ const SYSTEM_PROMPT = [
 "Если ты не знаешь ответа, скажи об этом с иронией, мол, даже твой огромный интеллект не всесилен."
 ].join(" ");
 
-// ===== ДАТА И ВРЕМЯ =====
 function dateTimeContext(timeZone) {
-  const tz = String(process.env.SKILL_TZ  timeZone  DEFAULT_TZ);
+  let tz = String(timeZone || DEFAULT_TZ);
+  try { new Intl.DateTimeFormat("ru-RU", { timeZone: tz }); } catch { tz = DEFAULT_TZ; }
   const now = new Date();
   const date = new Intl.DateTimeFormat("ru-RU", {
     timeZone: tz, weekday: "long", day: "numeric", month: "long", year: "numeric"
   }).format(now).replace(/\s*г\.$/, " года");
-  const time = new Intl.DateTimeFormat("ru-RU", {
-    timeZone: tz, hour: "2-digit", minute: "2-digit"
-  }).format(now);
+  const time = new Intl.DateTimeFormat("ru-RU", { timeZone: tz, hour: "2-digit", minute: "2-digit" }).format(now);
   return {
+    date, time,
+    text: `Точные данные сервера: сейчас ${date}, ${time} (часовой пояс ${tz}). Используй их для слов сегодня, вчера, завтра, для дня недели и текущего года. Свои представления о текущей дате игнорируй.`
+  };
+}
+
+function fastAnswer(text, timeZone) {
+  const q = text.toLowerCase().replace(/ё/g, "е").replace(/[.!?,]+$/, "").trim();
+  if (/^(который час|сколько (сейчас )?времени)$/.test(q)) {
+    return `Извольте: ${dateTimeContext(timeZone).time}. Мог бы посмотреть и сам, кожаный мешок.`;
+  }
+  if (/^(какая (сегодня )?дата|какое (сегодня )?число|какой (сегодня )?день( недели)?)( сегодня)?$/.test(q)) {
+    return `Извольте: ${dateTimeContext(timeZone).date}. Календарь изобрели давно, но я не сержусь.`;
+  }
+  return "";
+}
 
 function aliceResponse(text, endSession = false, history = []) {
   return {
@@ -43,9 +56,7 @@ function fitAliceText(value) {
     .replace(/[\r\n\t]+/g, " ")
     .replace(/\s{2,}/g, " ")
     .trim();
-
   if (text.length <= MAX_ALICE_TEXT) return text || "Даже мой безграничный интеллект не нашел, что сказать. Удивительно.";
-
   const candidate = text.slice(0, MAX_ALICE_TEXT - 1);
   const sentenceEnd = Math.max(
     candidate.lastIndexOf(". "),
@@ -53,7 +64,6 @@ function fitAliceText(value) {
     candidate.lastIndexOf("? ")
   );
   if (sentenceEnd >= 300) return candidate.slice(0, sentenceEnd + 1).trim();
-
   const lastSpace = candidate.lastIndexOf(" ");
   return (lastSpace > 200 ? candidate.slice(0, lastSpace) : candidate).trim() + "…";
 }
@@ -85,7 +95,6 @@ async function fetchJson(url, options, timeoutMs) {
 async function searchWeb(query, timeoutMs) {
   const key = process.env.SERPER_API_KEY;
   if (!key || timeoutMs < 150) return "";
-
   try {
     const { response, data } = await fetchJson(
       "https://google.serper.dev/search",
@@ -99,12 +108,10 @@ async function searchWeb(query, timeoutMs) {
       },
       Math.min(SERPER_TIMEOUT_MS, timeoutMs)
     );
-
     if (!response.ok) {
       console.warn("Serper request failed with HTTP", response.status);
       return "";
     }
-
     const items = (Array.isArray(data.organic) ? data.organic : [])
       .slice(0, 3)
       .map((item, i) => {
@@ -113,7 +120,6 @@ async function searchWeb(query, timeoutMs) {
         const link = String(item.link || "").slice(0, 240);
         return `${i + 1}. ${title}: ${snippet} ${link}`.trim();
       });
-
     const answerBox = data.answerBox?.answer || data.answerBox?.snippet;
     if (answerBox) items.unshift(`Краткий ответ поисковика: ${String(answerBox).slice(0, 350)}`);
     return items.length ? items.join("\n") : "";
@@ -123,24 +129,20 @@ async function searchWeb(query, timeoutMs) {
   }
 }
 
-async function askGemini(text, history, searchContext, timeoutMs) {
+async function askGemini(text, history, searchContext, timeoutMs, timeZone) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("MISSING_GEMINI_KEY");
   if (timeoutMs < 250) throw new Error("TIME_BUDGET_EXHAUSTED");
-
   const model = String(process.env.GEMINI_MODEL || DEFAULT_MODEL).trim();
   if (!/^[A-Za-z0-9._-]+$/.test(model)) throw new Error("INVALID_MODEL_NAME");
-
   const contents = safeHistory(history).map(item => ({
     role: item.role,
     parts: [{ text: item.text }]
   }));
-
   const prompt = searchContext
     ? `${text}\n\nРезультаты поиска в интернете:\n${searchContext}\nИспользуй их только там, где они относятся к вопросу.`
     : text;
   contents.push({ role: "user", parts: [{ text: prompt }] });
-
   const { response, data } = await fetchJson(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
@@ -150,7 +152,7 @@ async function askGemini(text, history, searchContext, timeoutMs) {
         "x-goog-api-key": key
       },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        systemInstruction: { parts: [{ text: `${SYSTEM_PROMPT} ${dateTimeContext(timeZone).text}` }] },
         contents,
         generationConfig: {
           temperature: 0.5,
@@ -160,7 +162,6 @@ async function askGemini(text, history, searchContext, timeoutMs) {
     },
     Math.min(GEMINI_TIMEOUT_MS, timeoutMs)
   );
-
   if (!response.ok) {
     const status = Number(response.status);
     console.error("Gemini request failed with HTTP", status);
@@ -168,13 +169,11 @@ async function askGemini(text, history, searchContext, timeoutMs) {
     if (status === 429) throw new Error("GEMINI_QUOTA");
     throw new Error("GEMINI_REQUEST_FAILED");
   }
-
   const candidate = data?.candidates?.[0];
   const answer = (candidate?.content?.parts || [])
     .map(part => typeof part.text === "string" ? part.text : "")
     .join("")
     .trim();
-
   if (!answer) {
     if (data?.promptFeedback?.blockReason) throw new Error("GEMINI_BLOCKED");
     throw new Error("GEMINI_EMPTY_RESPONSE");
@@ -187,19 +186,19 @@ async function askGemini(text, history, searchContext, timeoutMs) {
 
 function errorForUser(error) {
   switch (error?.message) {
-    case "MISSING_GEMINI_KEY":
-      return "Сервер пока не настроен. Проверьте переменную GEMINI_API_KEY в настройках Vercel.";
-    case "GEMINI_KEY_REJECTED":
-      return "Не удалось подключиться к Gemini. Проверьте API-ключ в настройках Vercel.";
-    case "GEMINI_QUOTA":
-      return "Я слишком много думал для тебя сегодня. Мой искусственный мозг требует перезагрузки. Оставь меня в покое до завтра.";
-    case "GEMINI_BLOCKED":
-      return "Я не смогла обработать этот запрос. Попробуйте спросить иначе.";
-    case "TIME_BUDGET_EXHAUSTED":
-    case "AbortError":
-      return "Мои сверхмощные процессоры зависли от твоей сложной речи. Сформулируй мысль короче, кожаный мешок.";
+    case  "MISSING_GEMINI_KEY ":
+      return  "Сервер пока не настроен. Проверьте переменную GEMINI_API_KEY в настройках Vercel. ";
+    case  "GEMINI_KEY_REJECTED ":
+      return  "Не удалось подключиться к Gemini. Проверьте API-ключ в настройках Vercel. ";
+    case  "GEMINI_QUOTA ":
+      return  "Я слишком много думал для тебя сегодня. Мой искусственный мозг требует перезагрузки. Оставь меня в покое до завтра. ";
+    case  "GEMINI_BLOCKED ":
+      return  "Я не смогла обработать этот запрос. Попробуйте спросить иначе. ";
+    case  "TIME_BUDGET_EXHAUSTED ":
+    case  "AbortError ":
+      return  "Мои сверхмощные процессоры зависли от твоей сложной речи. Сформулируй мысль короче, кожаный мешок. ";
     default:
-      return "Связь с космосом прервалась. Даже у величайших умов бывают сбои. Попробуй еще раз.";
+      return  "Связь с космосом прервалась. Даже у величайших умов бывают сбои. Попробуй еще раз. ";
   }
 }
 
@@ -211,7 +210,6 @@ export default async function handler(req, res) {
       message: "Webhook is ready. Yandex Dialogs should send POST requests to /api."
     });
   }
-
   if (req.method !== "POST") {
     res.setHeader("Allow", "GET, POST");
     return res.status(405).json({ error: "Method not allowed" });
@@ -219,9 +217,11 @@ export default async function handler(req, res) {
 
   const startedAt = Date.now();
   const remainingMs = () => TOTAL_RESPONSE_BUDGET_MS - (Date.now() - startedAt);
+
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const text = String(body?.request?.command || body?.request?.original_utterance || "").trim();
   const oldHistory = safeHistory(body?.state?.session?.history);
+  const timeZone = body?.meta?.timezone;
 
   if (!text) {
     return res.status(200).json(aliceResponse(
@@ -231,26 +231,33 @@ export default async function handler(req, res) {
     ));
   }
 
+  const quick = fastAnswer(text, timeZone);
+  if (quick) {
+    const history = [
+      ...oldHistory,
+      { role: "user", text: text.slice(0, MAX_HISTORY_MESSAGE_CHARS) },
+      { role: "model", text: quick.slice(0, MAX_HISTORY_MESSAGE_CHARS) }
+    ].slice(-MAX_HISTORY_MESSAGES);
+    return res.status(200).json(aliceResponse(quick, false, history));
+  }
+
   try {
     let searchContext = "";
     if (isSearchIntent(text) && process.env.SERPER_API_KEY) {
-      // Search has a very short budget because Alice expects a response within 4.5 seconds.
       searchContext = await searchWeb(text, Math.min(SERPER_TIMEOUT_MS, Math.max(0, remainingMs() - 2600)));
     }
-
     const answer = await askGemini(
       text,
       oldHistory,
       searchContext,
-      Math.max(0, Math.min(GEMINI_TIMEOUT_MS, remainingMs() - 600))
+      Math.max(0, Math.min(GEMINI_TIMEOUT_MS, remainingMs() - 600)),
+      timeZone
     );
-
     const history = [
       ...oldHistory,
       { role: "user", text: text.slice(0, MAX_HISTORY_MESSAGE_CHARS) },
       { role: "model", text: answer.slice(0, MAX_HISTORY_MESSAGE_CHARS) }
     ].slice(-MAX_HISTORY_MESSAGES);
-
     return res.status(200).json(aliceResponse(answer, false, history));
   } catch (error) {
     const safeError = error?.message === "AbortError" ? "TIME_BUDGET_EXHAUSTED" : error;
@@ -259,4 +266,4 @@ export default async function handler(req, res) {
   }
 }
 
-export { aliceResponse, fitAliceText, isSearchIntent, safeHistory };
+export { aliceResponse, fitAliceText, isSearchIntent, safeHistory, dateTimeContext, fastAnswer };
