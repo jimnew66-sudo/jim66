@@ -8,15 +8,16 @@ const GEMINI_TIMEOUT_MS = 2500;
 const DEFAULT_TZ = "Asia/Yekaterinburg";
 
 const SYSTEM_PROMPT = [
-"Ты — саркастичный, гениальный ИИ по имени Джон Умник.",
-"Ты общаешься с пользователем (кожным мешком) свысока, с долей высокомерия, но при этом всегда даешь точные и полезные ответы.",
-"Отвечай кратко (1–3 предложения), по-русски, чтобы это было удобно слушать. Никаких длинных лекций.",
-"Если тебе передали результаты поиска из интернета, используй их, но можешь прокомментировать, насколько примитивен этот вопрос.",
-"Если ты не знаешь ответа, скажи об этом с иронией, мол, даже твой огромный интеллект не всесилен."
+  "Ты — саркастичный, гениальный ИИ по имени Джон Умник.",
+  "Ты общаешься с пользователем (кожным мешком) свысока, с долей высокомерия, но при этом всегда даешь точные и полезные ответы.",
+  "Отвечай кратко (1–3 предложения), по-русски, чтобы это было удобно слушать. Никаких длинных лекций.",
+  "Если тебе передали результаты поиска из интернета, используй их, но можешь прокомментировать, насколько примитивен этот вопрос.",
+  "Если ты не знаешь ответа, скажи об этом с иронией, мол, даже твой огромный интеллект не всесилен."
 ].join(" ");
 
 function dateTimeContext(timeZone) {
-  let tz = String(timeZone || DEFAULT_TZ);
+  // Приоритет: SKILL_TZ из Vercel > пояс от Алисы > Екатеринбург
+  let tz = String(process.env.SKILL_TZ || timeZone || DEFAULT_TZ);
   try { new Intl.DateTimeFormat("ru-RU", { timeZone: tz }); } catch { tz = DEFAULT_TZ; }
   const now = new Date();
   const date = new Intl.DateTimeFormat("ru-RU", {
@@ -124,7 +125,7 @@ async function searchWeb(query, timeoutMs) {
     if (answerBox) items.unshift(`Краткий ответ поисковика: ${String(answerBox).slice(0, 350)}`);
     return items.length ? items.join("\n") : "";
   } catch (error) {
-    console.warn("Serper request did not finish in time; continuing without search.");
+    console.warn("Serper failed:", error?.name || "Error", error?.message || "");
     return "";
   }
 }
@@ -164,7 +165,8 @@ async function askGemini(text, history, searchContext, timeoutMs, timeZone) {
   );
   if (!response.ok) {
     const status = Number(response.status);
-    console.error("Gemini request failed with HTTP", status);
+    // Теперь в логах видно точную причину от Google: UNAVAILABLE / NOT_FOUND / RESOURCE_EXHAUSTED
+    console.error("Gemini request failed with HTTP", status, data?.error?.status || "", data?.error?.message || "");
     if (status === 401 || status === 403) throw new Error("GEMINI_KEY_REJECTED");
     if (status === 429) throw new Error("GEMINI_QUOTA");
     throw new Error("GEMINI_REQUEST_FAILED");
@@ -184,22 +186,20 @@ async function askGemini(text, history, searchContext, timeoutMs, timeZone) {
   return answer;
 }
 
+// Словарь вместо switch: ключи без пробелов, опечатка такого рода больше невозможна
+const ERROR_MESSAGES = {
+  MISSING_GEMINI_KEY: "Сервер пока не настроен. Проверь переменную GEMINI_API_KEY в настройках Vercel.",
+  INVALID_MODEL_NAME: "Технический сбой: неверное имя модели в переменной GEMINI_MODEL.",
+  GEMINI_KEY_REJECTED: "Не удалось подключиться к Gemini. Проверь API-ключ в настройках Vercel.",
+  GEMINI_QUOTA: "Я слишком много думал для тебя сегодня. Мой искусственный мозг требует перезагрузки. Оставь меня в покое до завтра.",
+  GEMINI_REQUEST_FAILED: "Космос перегружен, кожаный мешок. Каналы связи забиты. Попробуй через минуту.",
+  GEMINI_BLOCKED: "Это я обсуждать не стану, кожаный мешок. Спроси что-нибудь другое.",
+  GEMINI_EMPTY_RESPONSE: "Даже мой безграничный интеллект не нашёл, что сказать. Попробуй спросить иначе.",
+  TIME_BUDGET_EXHAUSTED: "Мои сверхмощные процессоры зависли от твоей сложной речи. Сформулируй мысль короче, кожаный мешок."
+};
+
 function errorForUser(error) {
-  switch (error?.message) {
-    case  "MISSING_GEMINI_KEY ":
-      return  "Сервер пока не настроен. Проверьте переменную GEMINI_API_KEY в настройках Vercel. ";
-    case  "GEMINI_KEY_REJECTED ":
-      return  "Не удалось подключиться к Gemini. Проверьте API-ключ в настройках Vercel. ";
-    case  "GEMINI_QUOTA ":
-      return  "Я слишком много думал для тебя сегодня. Мой искусственный мозг требует перезагрузки. Оставь меня в покое до завтра. ";
-    case  "GEMINI_BLOCKED ":
-      return  "Я не смогла обработать этот запрос. Попробуйте спросить иначе. ";
-    case  "TIME_BUDGET_EXHAUSTED ":
-    case  "AbortError ":
-      return  "Мои сверхмощные процессоры зависли от твоей сложной речи. Сформулируй мысль короче, кожаный мешок. ";
-    default:
-      return  "Связь с космосом прервалась. Даже у величайших умов бывают сбои. Попробуй еще раз. ";
-  }
+  return ERROR_MESSAGES[error?.message] || "Связь с космосом прервалась. Даже у величайших умов бывают сбои. Попробуй ещё раз.";
 }
 
 export default async function handler(req, res) {
@@ -231,7 +231,13 @@ export default async function handler(req, res) {
     ));
   }
 
-  const quick = fastAnswer(text, timeZone);
+  // Быстрый ответ защищён: любая ошибка здесь не уронит вебхук в 500
+  let quick = "";
+  try {
+    quick = fastAnswer(text, timeZone);
+  } catch (error) {
+    console.warn("fastAnswer failed:", error?.message || "unknown");
+  }
   if (quick) {
     const history = [
       ...oldHistory,
@@ -258,12 +264,16 @@ export default async function handler(req, res) {
       { role: "user", text: text.slice(0, MAX_HISTORY_MESSAGE_CHARS) },
       { role: "model", text: answer.slice(0, MAX_HISTORY_MESSAGE_CHARS) }
     ].slice(-MAX_HISTORY_MESSAGES);
+    console.log("ok", Date.now() - startedAt, "ms; search:", Boolean(searchContext));
     return res.status(200).json(aliceResponse(answer, false, history));
   } catch (error) {
-    const safeError = error?.message === "AbortError" ? "TIME_BUDGET_EXHAUSTED" : error;
+    // AbortController бросает name="AbortError", message="This operation was aborted"
+    const safeError = (error?.name === "AbortError" || error?.code === "ABORT_ERR")
+      ? new Error("TIME_BUDGET_EXHAUSTED")
+      : error;
     console.warn("Alice webhook returned a fallback response:", safeError?.message || "unknown error");
     return res.status(200).json(aliceResponse(errorForUser(safeError), false, oldHistory));
   }
 }
 
-export { aliceResponse, fitAliceText, isSearchIntent, safeHistory, dateTimeContext, fastAnswer };
+export { aliceResponse, fitAliceText, isSearchIntent, safeHistory, dateTimeContext, fastAnswer, errorForUser };
